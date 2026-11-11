@@ -270,6 +270,65 @@ sudo journalctl -u docker --since '10 minutes ago' --no-pager
 
 `/data/harbor` kalıcı verileri içerir. Bu rehber veri silme veya sıfırlama adımı içermez.
 
+## 10. Proxy Cache repoları oluştur
+
+Harbor'da upstream registry için önce **Registry Endpoint**, ardından bu endpoint'e bağlı **Proxy Cache projesi** oluşturulur. İmajlar ilk pull sırasında cache'e alınır; bu projelere push yapılamaz. Uygulama imajlarını yüklemek için normal proje kullan.
+
+### Registry endpoint ekle
+
+Admin ile **Administration → Registries → New Endpoint** ekranını aç. Örnek Docker Hub ayarları:
+
+| Alan | Değer |
+|---|---|
+| Provider | Docker Hub |
+| Name | dockerhub-upstream |
+| Endpoint URL | `https://hub.docker.com` |
+| Access ID | Docker Hub kullanıcı adı |
+| Access Secret | Docker Hub erişim token'ı |
+| Verify Remote Cert | Açık |
+
+Public imajlar için anonim erişim kullanılabilir; upstream limitlerini ve kimlik doğrulama gereksinimlerini dikkate al. **Test Connection** başarılı olunca kaydet. Upstream hesabına yalnızca gerekli okuma yetkilerini ver: proxy projesi kullanıcıları bu hesabın erişebildiği upstream imajları çekebilir.
+
+Başka upstream'ler için ayrı endpoint oluştur:
+
+| Endpoint adı | Provider | Endpoint URL | Önerilen proje |
+|---|---|---|---|
+| quay-upstream | Docker registry | `https://quay.io` | quay |
+| k8s-upstream | Docker registry | `https://registry.k8s.io` | k8s |
+| ghcr-upstream | Github Container Registry | `https://ghcr.io` | ghcr |
+
+Her endpoint'i kendi bağlantı testiyle doğrula. GHCR private içerikleri için ilgili paketlere erişebilen kullanıcı/token kullan. Harbor sunucusunun registry, token servisi ve imaj katmanlarının indirildiği adreslere çıkışı olmalıdır.
+
+Kaynak: [resmi registry endpoint oluşturma rehberi](https://goharbor.io/docs/main/administration/configuring-replication/create-replication-endpoints/).
+
+### Endpoint'i Proxy Cache projesine bağla
+
+**Projects → New Project** ekranında:
+
+1. Project Name: `docker-registry` yaz.
+2. Erişim ihtiyacına göre private/public seç; private projede kullanıcı veya robot hesaba pull yetkisi ver.
+3. **Proxy Cache** seçeneğini aç.
+4. Endpoint olarak `dockerhub-upstream` seç ve kaydet.
+
+`quay`, `k8s` ve `ghcr` projelerini de tabloda karşılık gelen endpoint'e bağlayarak oluştur. Bunlar örnek isimlerdir; yalnızca kullandığın upstream'leri ekle.
+
+### İmajları Harbor üzerinden çek ve doğrula
+
+Private projeler için önce Harbor kullanıcısıyla login ol; upstream token'ını burada kullanma:
+
+```bash
+sudo docker login harbor.example.com
+sudo docker pull harbor.example.com/docker-registry/library/nginx:stable
+sudo docker pull harbor.example.com/quay/prometheus/node-exporter:latest
+sudo docker pull harbor.example.com/k8s/pause:3.10
+```
+
+Yol eşlemesi: `docker.io/library/nginx:stable` → `harbor.example.com/docker-registry/library/nginx:stable`. Docker Hub resmi imajlarında `library/` korunur. UI'da ilgili projenin **Repositories** ekranında imajı doğrula. Cache yalnızca Harbor adresine yapılan pull ile dolar; doğrudan `docker pull nginx:stable` bu cache'i kullanmaz.
+
+Tamamen offline ortamda yeni imaj cache'e alınamaz. Gerekli imajları bağlantı varken Harbor üzerinden önceden çek. Cache kalıcılığı için projenin **Tag Retention** politikasını gözden geçir. Bağlantı yokken cache'te bulunmayan imajlar çekilemez.
+
+Kaynak: [resmi Proxy Cache rehberi](https://goharbor.io/docs/main/administration/configure-proxy-cache/).
+
 ## Resmi kaynaklar ve doğrulama sınırı
 
 - [Güncel kararlı release](https://github.com/goharbor/harbor/releases/latest) — bu rehber v2.16.0'a sabitlenmiştir; sürüm değişirse paket adı ve SHA-256 değerleri birlikte güncellenmelidir.
